@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">MapKit</string>
+    <string name="title">Определение местоположения</string>
+    <string name="now">Текущее местоположение</string>
+</resources>
