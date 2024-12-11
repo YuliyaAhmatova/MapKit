@@ -8,6 +8,7 @@ import android.graphics.Canvas
 import android.location.Location
 import android.os.Bundle
 import android.os.PersistableBundle
+import android.widget.Toast
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
@@ -20,16 +21,38 @@ import com.google.android.gms.location.LocationServices
 import com.yandex.mapkit.Animation
 import com.yandex.mapkit.MapKitFactory
 import com.yandex.mapkit.geometry.Point
+import com.yandex.mapkit.layers.GeoObjectTapListener
+import com.yandex.mapkit.map.CameraListener
 import com.yandex.mapkit.map.CameraPosition
+import com.yandex.mapkit.map.CameraUpdateReason
+import com.yandex.mapkit.map.GeoObjectSelectionMetadata
+import com.yandex.mapkit.map.InputListener
+import com.yandex.mapkit.map.Map
 import com.yandex.mapkit.map.MapObjectCollection
+import com.yandex.mapkit.map.MapObjectTapListener
 import com.yandex.mapkit.map.PlacemarkMapObject
+import com.yandex.mapkit.search.Address
+import com.yandex.mapkit.search.Response
+import com.yandex.mapkit.search.SearchFactory
+import com.yandex.mapkit.search.SearchManager
+import com.yandex.mapkit.search.SearchManagerType
+import com.yandex.mapkit.search.SearchOptions
+import com.yandex.mapkit.search.Session
+import com.yandex.mapkit.search.ToponymObjectMetadata
+import com.yandex.mapkit.traffic.TrafficLayer
+import com.yandex.runtime.Error
 import com.yandex.runtime.image.ImageProvider
 
-class MapActivity : AppCompatActivity() {
+class MapActivity : AppCompatActivity(), CameraListener {
+
+    private lateinit var trafficLayer: TrafficLayer
+
+    lateinit var searchManager: SearchManager
+    lateinit var searchSession: Session
 
     private lateinit var binding: ActivityMapBinding
     private val startLocation = Point(53.2122, 50.1438)
-    private val zoomValue: Float = 16.5f
+    private var zoomValue: Float = 16.5f
 
     private lateinit var mapObjectCollection: MapObjectCollection
     private lateinit var placemarkMapObject: PlacemarkMapObject
@@ -38,6 +61,47 @@ class MapActivity : AppCompatActivity() {
 
     private companion object {
         private const val LOCATION_PERMISSION_REQUEST_CODE = 1
+        const val ZOOM_BOUNDARY = 16.4f
+    }
+
+    private val mapObjectTapListener = MapObjectTapListener { mapObject, point ->
+        Toast.makeText(applicationContext, "Ракета", Toast.LENGTH_SHORT).show()
+        true
+    }
+
+    private val tapListener = GeoObjectTapListener { geoObjectTapEvent ->
+        val selectionMetadata: GeoObjectSelectionMetadata = geoObjectTapEvent
+            .geoObject
+            .metadataContainer
+            .getItem(GeoObjectSelectionMetadata::class.java)
+
+        binding.mapView.map.selectGeoObject(selectionMetadata)
+        false
+    }
+
+    private val searchListener = object : Session.SearchListener {
+        override fun onSearchResponse(response: Response) {
+            val street = response.collection.children.firstOrNull()?.obj
+                ?.metadataContainer
+                ?.getItem(ToponymObjectMetadata::class.java)
+                ?.address
+                ?.components
+                ?.firstOrNull { it.kinds.contains(Address.Component.Kind.STREET) }
+                ?.name ?: "Информация не найдена"
+
+            Toast.makeText(applicationContext, street, Toast.LENGTH_SHORT).show()
+        }
+
+        override fun onSearchError(p0: Error) {}
+
+    }
+
+    private val inputListener = object : InputListener {
+        override fun onMapTap(map: Map, point: Point) {
+            searchSession = searchManager.submit(point, 20, SearchOptions(), searchListener)
+        }
+
+        override fun onMapLongTap(p0: Map, p1: Point) {}
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -59,6 +123,24 @@ class MapActivity : AppCompatActivity() {
             null
         )
         setMarkerInStartLocation()
+        binding.mapView.map.addCameraListener(this)
+        placemarkMapObject.addTapListener(mapObjectTapListener)
+        binding.mapView.map.addTapListener(tapListener)
+        searchManager = SearchFactory.getInstance().createSearchManager(SearchManagerType.ONLINE)
+        binding.mapView.map.addInputListener(inputListener)
+
+        trafficLayer = MapKitFactory.getInstance().createTrafficLayer(binding.mapView.mapWindow)
+        trafficLayer.isTrafficVisible = false
+        binding.buttonTrafficBTN.setOnClickListener {
+            if (trafficLayer.isTrafficVisible) {
+                trafficLayer.isTrafficVisible = false
+                Toast.makeText(this, "Трафик выключен", Toast.LENGTH_SHORT).show()
+            } else {
+                trafficLayer.isTrafficVisible = true
+                Toast.makeText(this, "Трафик включен", Toast.LENGTH_SHORT).show()
+            }
+        }
+
         binding.buttonBTN.setOnClickListener {
             if (ContextCompat.checkSelfPermission(
                     this,
@@ -69,6 +151,26 @@ class MapActivity : AppCompatActivity() {
             } else {
                 getCurrentLocation()
             }
+        }
+    }
+
+    override fun onCameraPositionChanged(
+        map: Map,
+        cameraPosition: CameraPosition,
+        cameraUpdateReason: CameraUpdateReason,
+        finished: Boolean
+    ) {
+        if (finished) {
+            when {
+                cameraPosition.zoom >= ZOOM_BOUNDARY && zoomValue <= ZOOM_BOUNDARY -> {
+                    placemarkMapObject.setIcon(ImageProvider.fromBitmap(createBitmapFromVector(R.drawable.ic_pin_blue)))
+                }
+
+                cameraPosition.zoom <= ZOOM_BOUNDARY && zoomValue >= ZOOM_BOUNDARY -> {
+                    placemarkMapObject.setIcon(ImageProvider.fromBitmap(createBitmapFromVector(R.drawable.ic_pin_red)))
+                }
+            }
+            zoomValue = cameraPosition.zoom
         }
     }
 
@@ -135,7 +237,7 @@ class MapActivity : AppCompatActivity() {
     }
 
     private fun setApiKey(savedInstanceState: Bundle?) {
-        val haveApiKey = savedInstanceState?.getBoolean("haveApiKey") ?: false
+        val haveApiKey = savedInstanceState?.getBoolean("haveApiKey") == true
         if (!haveApiKey) MapKitFactory.setApiKey(BuildConfig.MAPKIT_API_KEY)
     }
 
